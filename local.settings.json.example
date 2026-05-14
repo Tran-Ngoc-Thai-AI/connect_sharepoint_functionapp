@@ -1,0 +1,21 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "SHAREPOINT_SITE_URL": "https://<tenant>.sharepoint.com/sites/<site-name>",
+    "SHAREPOINT_LIBRARY_TITLE": "Documents",
+    "STORAGE_ACCOUNT_URL": "https://<storage-account>.blob.core.windows.net",
+    "QUEUE_ACCOUNT_URL": "https://<storage-account>.queue.core.windows.net",
+    "INGESTION_STORAGE_CONNECTION_STRING": "DefaultEndpointsProtocol=https;AccountName=<storage-account>;AccountKey=<storage-key>;EndpointSuffix=core.windows.net",
+    "DOCUMENT_QUEUE_NAME": "document-processing-queue",
+    "RAW_DOCUMENTS_CONTAINER": "raw-documents",
+    "METADATA_CONTAINER": "metadata",
+    "STATE_CONTAINER": "state",
+    "DEADLETTER_CONTAINER": "deadletter",
+    "SNAPSHOT_STATE_BLOB": "document_library_state.json",
+    "DISABLE_CHANGE_DETECTION_TIMER": "false",
+    "SHAREPOINT_PAGE_SIZE": "5000",
+    "SHAREPOINT_TIMEOUT_SECONDS": "30"
+  }
+}
