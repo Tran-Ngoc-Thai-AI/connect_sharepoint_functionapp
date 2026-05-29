@@ -106,6 +106,7 @@ def _process_change(
     started = time.perf_counter()
 
     try:
+        previous_metadata = storage.load_metadata(file_id) if event_type == "deleted" else None
         metadata, queue_message = _build_payloads(item, event_type, run_id)
 
         if event_type != "deleted":
@@ -120,6 +121,16 @@ def _process_change(
                 log_context,
             )
             metadata["blob_path"] = blob_path
+            queue_message["blob_path"] = blob_path
+        else:
+            blob_path = previous_metadata.get("blob_path") if previous_metadata else None
+            deleted_blob_paths = _timed(
+                lambda: storage.delete_raw_document(file_id, metadata["file_name"], blob_path),
+                "blob_delete_latency_ms",
+                log_context,
+            )
+            metadata["blob_path"] = blob_path
+            metadata["deleted_blob_paths"] = deleted_blob_paths
             queue_message["blob_path"] = blob_path
 
         storage.upload_json(storage.settings.metadata_container, f"{file_id}.json", metadata)

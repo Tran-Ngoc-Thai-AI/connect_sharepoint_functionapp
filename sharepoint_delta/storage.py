@@ -66,6 +66,28 @@ class StorageGateway:
         )
         return f"{self.settings.raw_container}/{blob_name}"
 
+    def delete_raw_document(self, file_id: str, file_name: str, blob_path: str | None = None) -> list[str]:
+        from azure.core.exceptions import ResourceNotFoundError
+
+        candidates = self._raw_document_candidates(file_id, file_name, blob_path)
+
+        def operation() -> None:
+            for container, blob_name in candidates:
+                try:
+                    self.blobs.get_blob_client(container, blob_name).delete_blob()
+                except ResourceNotFoundError:
+                    pass
+
+        retry_call(
+            operation,
+            operation_name="blob_delete_raw_document",
+            max_attempts=3,
+            delays=[1, 2, 4],
+            log_context={**self.run_context, "file_id": file_id},
+            retry_metric=self.on_retry,
+        )
+        return [f"{container}/{blob_name}" for container, blob_name in candidates]
+
     def upload_json(self, container: str, blob_name: str, payload: dict[str, Any]) -> None:
         from azure.storage.blob import ContentSettings
 
@@ -114,6 +136,24 @@ class StorageGateway:
         except ResourceNotFoundError:
             return None
         return json.loads(data.decode("utf-8"))
+
+    def _raw_document_candidates(
+        self,
+        file_id: str,
+        file_name: str,
+        blob_path: str | None,
+    ) -> list[tuple[str, str]]:
+        candidates: list[tuple[str, str]] = []
+
+        if blob_path:
+            container, _, blob_name = blob_path.partition("/")
+            if container and blob_name:
+                candidates.append((container, blob_name))
+
+        candidates.append((self.settings.raw_container, f"{file_name}/{file_name}"))
+        candidates.append((self.settings.raw_container, f"{file_id}/{file_name}"))
+
+        return list(dict.fromkeys(candidates))
 
     def _ensure_resources(self) -> None:
         from azure.core.exceptions import ResourceExistsError
