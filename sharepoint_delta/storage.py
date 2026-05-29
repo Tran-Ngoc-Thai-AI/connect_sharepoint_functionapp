@@ -47,7 +47,7 @@ class StorageGateway:
     def upload_raw_document(self, file_id: str, file_name: str, content: bytes) -> str:
         from azure.storage.blob import ContentSettings
 
-        blob_name = f"{file_id}/{file_name}"
+        blob_name = f"{file_name}/{file_name}"
 
         def operation() -> None:
             self.blobs.get_blob_client(self.settings.raw_container, blob_name).upload_blob(
