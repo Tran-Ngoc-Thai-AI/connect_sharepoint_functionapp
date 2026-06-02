@@ -12,10 +12,10 @@ from sharepoint_delta.sharepoint_client import SharePointRestClient
 
 
 app = func.FunctionApp()
-CODE_VERSION = os.getenv("CODE_VERSION", "v1.3.0")
+CODE_VERSION = os.getenv("CODE_VERSION", "v1.3.1")
 
 
-@app.route(route="version", auth_level=func.AuthLevel.ANONYMOUS)
+@app.route(route="{*path}", auth_level=func.AuthLevel.ANONYMOUS, methods=["GET"])
 def version_page(req: func.HttpRequest) -> func.HttpResponse:
     version = escape(CODE_VERSION)
     body = f"""<!doctype html>
@@ -72,7 +72,7 @@ def version_page(req: func.HttpRequest) -> func.HttpResponse:
 
 
 @app.timer_trigger(
-    schedule="0 0 18 * * *",
+    schedule="0 0 11 * * *",
     arg_name="timer",
     run_on_startup=False,
     use_monitor=True,

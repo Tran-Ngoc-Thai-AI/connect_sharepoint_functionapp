@@ -1,6 +1,10 @@
 {
   "version": "2.0",
-  "isDefaultHostConfig": true,
+  "extensions": {
+    "http": {
+      "routePrefix": ""
+    }
+  },
   "extensionBundle": {
     "id": "Microsoft.Azure.Functions.ExtensionBundle",
     "version": "[4.*, 5.0.0)"

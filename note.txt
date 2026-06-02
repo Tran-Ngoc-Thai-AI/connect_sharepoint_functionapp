@@ -28,3 +28,8 @@ yêu cầu:
 "SHAREPOINT_SITE_URL": "https://<tenant>.sharepoint.com/sites/<site-name>",
 "INGESTION_STORAGE_CONNECTION_STRING": "DefaultEndpointsProtocol=https;AccountName=<storage-account>;AccountKey=<storage-key>;EndpointSuffix=core.windows.net",
 "SHAREPOINT_LIBRARY_TITLE": "Documents",
+
+Test mỗi khi chức năng mới được build:
+- Đồng bộ New file.
+- Đồng bộ delete file.
+- Đồng bộ edit file.
