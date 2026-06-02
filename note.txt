@@ -10,3 +10,21 @@ XXXX.ABC.ZZZZ(n) - TÊN VĂN BẢN          ← Document metadata
 ├── PL02 - Trách nhiệm đơn vị            → CHUNK theo Khối/Phòng
 └── PL03 - Quy trình thực hiện           → CHUNK theo từng Bước ✅
 
+Tôi cần dev function app băng python chạy trên azure function app.
+yêu cầu: 
+- Python code chạy trên azure function app.
+- Function app kết nối sharepoint qua system Manage identitys.
+- Function app check sharepoint bằng Sharepoint rest api.
+- Cho phép cấu hình chỉ lấy file thư mục con của sharepoint sites.
+- Funcion app định kỳ check Sharepoint url để nắm thông tin file mới, file xóa nắm được các thay đổi.
+- Khi phát hiện thay đổi đồng bộ lại blob trên Azure storage.
+- Thư mục chứa mỗi file đồng bộ về cần đặt cùng tên file để dễ nhận diện.
+- Có cơ chế retry khi download file về blob fail.
+- Có cơ chế test kết nối Function app và sharepoint sites.
+- Có cơ chế ghi logs trạng thái.
+- Đánh dấu phiên bản bằng html để biết đang version nào.
+- Conda đã tạo môi trường sharepoint4 dùng luôn không cần tạo mới.
+- Các biến cần khai báo:
+"SHAREPOINT_SITE_URL": "https://<tenant>.sharepoint.com/sites/<site-name>",
+"INGESTION_STORAGE_CONNECTION_STRING": "DefaultEndpointsProtocol=https;AccountName=<storage-account>;AccountKey=<storage-key>;EndpointSuffix=core.windows.net",
+"SHAREPOINT_LIBRARY_TITLE": "Documents",

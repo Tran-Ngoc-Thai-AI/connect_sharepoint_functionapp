@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+from html import escape
 
 import azure.functions as func
 from azure.identity import DefaultAzureCredential
@@ -11,10 +12,67 @@ from sharepoint_delta.sharepoint_client import SharePointRestClient
 
 
 app = func.FunctionApp()
+CODE_VERSION = os.getenv("CODE_VERSION", "v1.3.0")
+
+
+@app.route(route="version", auth_level=func.AuthLevel.ANONYMOUS)
+def version_page(req: func.HttpRequest) -> func.HttpResponse:
+    version = escape(CODE_VERSION)
+    body = f"""<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SharePoint Delta Version</title>
+  <style>
+    body {{
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      font-family: Arial, sans-serif;
+      background: #f4f7fb;
+      color: #1f2937;
+    }}
+    main {{
+      width: min(92vw, 420px);
+      padding: 28px;
+      border: 1px solid #d7dee8;
+      border-radius: 8px;
+      background: #ffffff;
+      box-shadow: 0 12px 30px rgba(31, 41, 55, 0.08);
+    }}
+    h1 {{
+      margin: 0 0 12px;
+      font-size: 24px;
+      line-height: 1.2;
+    }}
+    .label {{
+      margin: 0 0 8px;
+      color: #52606d;
+      font-size: 14px;
+    }}
+    .version {{
+      margin: 0;
+      font-size: 32px;
+      font-weight: 700;
+      color: #0f766e;
+    }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>SharePoint Delta</h1>
+    <p class="label">Current code tag</p>
+    <p class="version">{version}</p>
+  </main>
+</body>
+</html>"""
+    return func.HttpResponse(body=body, status_code=200, mimetype="text/html")
 
 
 @app.timer_trigger(
-    schedule="0 */1 * * * *",
+    schedule="0 0 18 * * *",
     arg_name="timer",
     run_on_startup=False,
     use_monitor=True,
