@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from urllib.parse import quote, urlparse
 
 import requests
@@ -24,30 +24,34 @@ class SharePointRestClient:
         self.settings = settings
         self.run_context = run_context
         self.on_retry = on_retry
+        self._resolved_document_metadata_fields: dict[str, str] | None = None
         parsed = urlparse(settings.sharepoint_site_url)
         self.resource = f"{parsed.scheme}://{parsed.netloc}"
         self.scope = f"{self.resource}/.default"
 
     def iter_files(self) -> Iterator[dict]:
-        select = ",".join(
-            [
-                "Id",
-                "UniqueId",
-                "FileLeafRef",
-                "FileRef",
-                "Modified",
-                "FSObjType",
-                "File/Name",
-                "File/ServerRelativeUrl",
-                "File/TimeLastModified",
-                "File/ETag",
-                "File/Length",
-            ]
-        )
+        document_metadata_fields = self._document_metadata_fields()
+        select_fields = [
+            "Id",
+            "UniqueId",
+            "FileLeafRef",
+            "FileRef",
+            "Modified",
+            "FSObjType",
+            "File/Name",
+            "File/ServerRelativeUrl",
+            "File/TimeLastModified",
+            "File/ETag",
+            "File/Length",
+            *document_metadata_fields.values(),
+        ]
+        expand_fields = ["File", *_expand_fields(document_metadata_fields.values())]
+        select = ",".join(dict.fromkeys(select_fields))
+        expand = ",".join(dict.fromkeys(expand_fields))
         library_title = _escape_odata_string(self.settings.sharepoint_library_title)
         url = (
             f"{self.settings.sharepoint_site_url}/_api/web/lists/getbytitle('{library_title}')/items"
-            f"?$select={select}&$expand=File&$filter=FSObjType eq 0"
+            f"?$select={select}&$expand={expand}&$filter=FSObjType eq 0"
             f"&$top={self.settings.sharepoint_page_size}"
         )
 
@@ -55,7 +59,11 @@ class SharePointRestClient:
             payload = self._get_json(url)
             items = _extract_items(payload)
             for item in items:
-                normalized = _normalize_file_item(item, self.settings.sharepoint_site_url)
+                normalized = _normalize_file_item(
+                    item,
+                    self.settings.sharepoint_site_url,
+                    document_metadata_fields,
+                )
                 if normalized and _is_supported_file(normalized["file_name"], normalized["server_relative_url"]):
                     yield normalized
             url = _next_link(payload)
@@ -156,6 +164,46 @@ class SharePointRestClient:
     def _access_token(self) -> str:
         return self.credential.get_token(self.scope).token
 
+    def _document_metadata_fields(self) -> dict[str, str]:
+        if self._resolved_document_metadata_fields is None:
+            self._resolved_document_metadata_fields = self._resolve_document_metadata_fields(
+                self.settings.sharepoint_document_metadata_fields
+            )
+        return self._resolved_document_metadata_fields
+
+    def _resolve_document_metadata_fields(self, configured_fields: dict[str, str]) -> dict[str, str]:
+        if not configured_fields:
+            return {}
+
+        library_title = _escape_odata_string(self.settings.sharepoint_library_title)
+        url = (
+            f"{self.settings.sharepoint_site_url}/_api/web/lists/getbytitle('{library_title}')/fields"
+            "?$select=Title,InternalName,StaticName,EntityPropertyName"
+        )
+        fields = _extract_items(self._get_json(url))
+        field_lookup = _field_lookup(fields)
+        resolved_fields = {}
+
+        for metadata_name, configured_field in configured_fields.items():
+            field_root, separator, nested_path = configured_field.partition("/")
+            field = field_lookup.get(_field_lookup_key(field_root))
+            if not field:
+                raise ValueError(
+                    "Unable to resolve SharePoint metadata field "
+                    f"'{configured_field}' for '{metadata_name}'. "
+                    "Use the column Title, InternalName, StaticName, or EntityPropertyName from the library fields."
+                )
+
+            rest_field_name = (
+                field.get("EntityPropertyName")
+                or field.get("InternalName")
+                or field.get("StaticName")
+                or field.get("Title")
+            )
+            resolved_fields[metadata_name] = f"{rest_field_name}{separator}{nested_path}"
+
+        return resolved_fields
+
     def _log_sharepoint_error(self, response: requests.Response, url: str) -> None:
         logging.error(
             "sharepoint rest request failed",
@@ -184,7 +232,7 @@ def _next_link(payload: dict) -> str | None:
     return payload.get("d", {}).get("__next")
 
 
-def _normalize_file_item(item: dict, site_url: str) -> dict | None:
+def _normalize_file_item(item: dict, site_url: str, document_metadata_fields: dict[str, str]) -> dict | None:
     file_obj = item.get("File") or {}
     file_name = item.get("FileLeafRef") or file_obj.get("Name")
     server_relative_url = item.get("FileRef") or file_obj.get("ServerRelativeUrl")
@@ -201,10 +249,61 @@ def _normalize_file_item(item: dict, site_url: str) -> dict | None:
         "name": file_name,
         "file_name": file_name,
         "etag": etag,
+        "file_size_bytes": file_obj.get("Length"),
         "last_modified": last_modified,
+        "document_metadata": _extract_document_metadata(item, document_metadata_fields),
         "server_relative_url": server_relative_url,
         "web_url": f"{site_url.rstrip('/')}/{server_relative_url.lstrip('/')}",
     }
+
+
+def _expand_fields(fields: Iterable[str]) -> list[str]:
+    return [field.split("/", 1)[0] for field in fields if "/" in field]
+
+
+def _field_lookup(fields: list[dict]) -> dict[str, dict]:
+    lookup = {}
+    for field in fields:
+        for key in ["Title", "InternalName", "StaticName", "EntityPropertyName"]:
+            value = field.get(key)
+            if value:
+                lookup[_field_lookup_key(value)] = field
+    return lookup
+
+
+def _field_lookup_key(value: str) -> str:
+    return value.strip().casefold()
+
+
+def _extract_document_metadata(item: dict, document_metadata_fields: dict[str, str]) -> dict[str, str]:
+    return {
+        metadata_name: value
+        for metadata_name, field_name in document_metadata_fields.items()
+        if (value := _stringify_sharepoint_value(_get_nested_value(item, field_name))) is not None
+    }
+
+
+def _get_nested_value(item: dict, field_name: str):
+    value = item
+    for part in field_name.split("/"):
+        if not isinstance(value, dict) or part not in value:
+            return None
+        value = value[part]
+    return value
+
+
+def _stringify_sharepoint_value(value) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, list):
+        values = [_stringify_sharepoint_value(item) for item in value]
+        return "; ".join(item for item in values if item)
+    if isinstance(value, dict):
+        for key in ["Label", "Title", "Value", "LookupValue", "Name", "Email"]:
+            if value.get(key):
+                return str(value[key])
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    return str(value)
 
 
 def _is_supported_file(file_name: str, server_relative_url: str) -> bool:

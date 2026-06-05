@@ -44,7 +44,21 @@ class StorageGateway:
     def load_metadata(self, file_id: str) -> dict[str, Any] | None:
         return self._download_json(self.settings.metadata_container, f"{file_id}.json")
 
-    def upload_raw_document(self, file_id: str, file_name: str, content: bytes) -> str:
+    def list_metadata_file_ids(self) -> list[str]:
+        container_client = self.blobs.get_container_client(self.settings.metadata_container)
+        return [
+            blob.name.removesuffix(".json")
+            for blob in container_client.list_blobs()
+            if blob.name.endswith(".json")
+        ]
+
+    def upload_raw_document(
+        self,
+        file_id: str,
+        file_name: str,
+        content: bytes,
+        metadata: dict[str, str] | None = None,
+    ) -> str:
         from azure.storage.blob import ContentSettings
 
         blob_name = f"{file_name}/{file_name}"
@@ -54,6 +68,7 @@ class StorageGateway:
                 content,
                 overwrite=True,
                 content_settings=ContentSettings(content_type="application/octet-stream"),
+                metadata=metadata,
             )
 
         retry_call(
@@ -72,11 +87,16 @@ class StorageGateway:
         candidates = self._raw_document_candidates(file_id, file_name, blob_path)
 
         def operation() -> None:
+            deleted_count = 0
             for container, blob_name in candidates:
                 try:
                     self.blobs.get_blob_client(container, blob_name).delete_blob()
+                    deleted_count += 1
                 except ResourceNotFoundError:
                     pass
+            
+            if deleted_count == 0:
+                raise FileNotFoundError(f"Could not delete blob for file_id {file_id}. Tried candidates: {candidates}")
 
         retry_call(
             operation,

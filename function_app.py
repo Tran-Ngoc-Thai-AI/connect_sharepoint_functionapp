@@ -12,7 +12,7 @@ from sharepoint_delta.sharepoint_client import SharePointRestClient
 
 
 app = func.FunctionApp()
-CODE_VERSION = os.getenv("CODE_VERSION", "v1.3.1")
+CODE_VERSION = os.getenv("CODE_VERSION", "v1.4.0")
 
 
 @app.route(route="{*path}", auth_level=func.AuthLevel.ANONYMOUS, methods=["GET"])
@@ -73,6 +73,7 @@ def version_page(req: func.HttpRequest) -> func.HttpResponse:
 
 @app.timer_trigger(
     schedule="0 0 11 * * *",
+    # schedule="0 */1 * * * *",
     arg_name="timer",
     run_on_startup=False,
     use_monitor=True,
@@ -86,6 +87,16 @@ def sharepoint_change_detection_timer(timer: func.TimerRequest) -> None:
         return
 
     run_change_detection()
+
+
+@app.route(route="manual-sync", auth_level=func.AuthLevel.FUNCTION)
+def sharepoint_change_detection_manual(req: func.HttpRequest) -> func.HttpResponse:
+    logging.info("sharepoint_change_detection_manual function processed a request.")
+    run_change_detection()
+    return func.HttpResponse(
+        "Manual change detection process started successfully.",
+        status_code=202
+    )
 
 
 @app.route(route="sharepoint-rest-test", auth_level=func.AuthLevel.ANONYMOUS)

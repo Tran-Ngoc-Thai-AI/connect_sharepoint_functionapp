@@ -16,6 +16,7 @@
     "SNAPSHOT_STATE_BLOB": "document_library_state.json",
     "DISABLE_CHANGE_DETECTION_TIMER": "false",
     "SHAREPOINT_PAGE_SIZE": "5000",
-    "SHAREPOINT_TIMEOUT_SECONDS": "30"
+    "SHAREPOINT_TIMEOUT_SECONDS": "30",
+    "SHAREPOINT_DOCUMENT_METADATA_FIELDS": "{\"document_number\":\"<sharepoint-internal-name>\",\"document_title\":\"<sharepoint-internal-name>\",\"document_type\":\"<sharepoint-internal-name>\",\"domain\":\"<sharepoint-internal-name>\",\"issued_date\":\"<sharepoint-internal-name>\",\"effective_date\":\"<sharepoint-internal-name>\",\"effective_status\":\"<sharepoint-internal-name>\",\"owner_unit\":\"<sharepoint-internal-name>\",\"applicable_users\":\"<sharepoint-internal-name>\",\"replacement_info\":\"<sharepoint-internal-name>\"}"
   }
 }

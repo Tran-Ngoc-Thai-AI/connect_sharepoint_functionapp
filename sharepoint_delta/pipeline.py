@@ -4,6 +4,7 @@ import logging
 import time
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import quote
 from uuid import uuid4
 
 from azure.identity import DefaultAzureCredential
@@ -22,32 +23,52 @@ def run_change_detection() -> None:
     run_id = str(uuid4())
     run_context = {"run_id": run_id, "phase": PHASE, "function_name": FUNCTION_NAME}
     metrics = SyncMetrics()
-
     logging.info("starting sharepoint change detection", extra={"custom_dimensions": run_context})
 
-    settings = load_settings()
-    credential = DefaultAzureCredential()
-    storage = StorageGateway(settings, credential, run_context, lambda: metrics.inc("retry_count"))
-    sharepoint = SharePointRestClient(credential, settings, run_context, lambda: metrics.inc("retry_count"))
+    try:
+        settings = load_settings()
+        credential = DefaultAzureCredential()
+        storage = StorageGateway(settings, credential, run_context, lambda: metrics.inc("retry_count"))
+        sharepoint = SharePointRestClient(credential, settings, run_context, lambda: metrics.inc("retry_count"))
 
-    current_snapshot = _timed(
-        lambda: _build_current_snapshot(sharepoint, metrics),
-        "sharepoint_api_latency_ms",
-        run_context,
-    )
-    saved_snapshot = storage.load_snapshot_state()
-    changes = _detect_changes(saved_snapshot, current_snapshot)
+        logging.info("building current snapshot from sharepoint", extra={"custom_dimensions": run_context})
+        current_snapshot = _timed(
+            lambda: _build_current_snapshot(sharepoint, metrics),
+            "sharepoint_api_latency_ms",
+            run_context,
+        )
+        saved_snapshot = storage.load_snapshot_state()
 
-    for event_type, item in changes:
-        metrics.inc(f"{event_type}_count")
-        _process_change(item, event_type, run_id, sharepoint, storage, metrics, run_context)
+        all_changes: list[tuple[str, dict[str, Any]]] = []
+        if not saved_snapshot:
+            logging.info("resync mode: state file not found", extra={"custom_dimensions": run_context})
+            # 1. Find orphaned blobs to delete
+            orphaned = _find_orphaned_blobs(storage, current_snapshot, run_context)
+            all_changes.extend(orphaned)
+            # 2. Treat all files in SharePoint as 'created'
+            for item in current_snapshot.values():
+                all_changes.append(("created", item))
+            logging.info(f"resync mode: found {len(orphaned)} orphans and {len(current_snapshot)} created files", extra={"custom_dimensions": run_context})
+        else:
+            logging.info("delta mode: detecting changes from saved state", extra={"custom_dimensions": run_context})
+            all_changes = _detect_changes(saved_snapshot, current_snapshot)
 
-    storage.save_snapshot_state(_state_payload(current_snapshot))
+        logging.info(f"found {len(all_changes)} total changes to process", extra={"custom_dimensions": run_context})
+        for event_type, item in all_changes:
+            metrics.inc(f"{event_type}_count")
+            _process_change(item, event_type, run_id, sharepoint, storage, metrics, run_context)
 
-    logging.info(
-        "finished sharepoint change detection",
-        extra={"custom_dimensions": {**run_context, **metrics.snapshot()}},
-    )
+        storage.save_snapshot_state(_state_payload(current_snapshot))
+
+    except Exception:
+        logging.exception("a critical error occurred in sharepoint change detection", extra={"custom_dimensions": run_context})
+        # Re-raise the exception to make the function fail explicitly
+        raise
+    finally:
+        logging.info(
+            "finished sharepoint change detection",
+            extra={"custom_dimensions": {**run_context, **metrics.snapshot()}},
+        )
 
 
 def _build_current_snapshot(sharepoint: SharePointRestClient, metrics: SyncMetrics) -> dict[str, dict[str, Any]]:
@@ -79,11 +100,45 @@ def _detect_changes(
                 "file_name": previous.get("file_name", file_id),
                 "etag": previous.get("etag"),
                 "last_modified": previous.get("last_modified"),
+                "file_size_bytes": previous.get("file_size_bytes"),
+                "document_metadata": previous.get("document_metadata", {}),
                 "web_url": previous.get("sharepoint_url"),
                 "server_relative_url": previous.get("server_relative_url"),
             }
             changes.append(("deleted", deleted))
 
+    return changes
+
+
+def _find_orphaned_blobs(
+    storage: StorageGateway,
+    current_snapshot: dict[str, dict[str, Any]],
+    log_context: dict[str, str],
+) -> list[tuple[str, dict[str, Any]]]:
+    logging.info("listing all metadata files to find orphans", extra={"custom_dimensions": log_context})
+    blob_file_ids = set(storage.list_metadata_file_ids())
+    sharepoint_file_ids = set(current_snapshot.keys())
+
+    orphaned_ids = blob_file_ids - sharepoint_file_ids
+    logging.info(f"found {len(orphaned_ids)} orphaned blobs to delete", extra={"custom_dimensions": log_context})
+
+    changes: list[tuple[str, dict[str, Any]]] = []
+    for file_id in orphaned_ids:
+        # We need to load the metadata to get the file_name for deletion
+        metadata = storage.load_metadata(file_id)
+        if metadata:
+            deleted_item = {
+                "file_id": file_id,
+                "id": file_id,
+                "file_name": metadata.get("file_name", file_id),
+                "etag": metadata.get("etag"),
+                "last_modified": metadata.get("last_modified"),
+                "file_size_bytes": metadata.get("file_size_bytes"),
+                "document_metadata": metadata.get("document_metadata", {}),
+                "web_url": metadata.get("sharepoint_url"),
+                "server_relative_url": metadata.get("server_relative_url"),
+            }
+            changes.append(("deleted", deleted_item))
     return changes
 
 
@@ -116,22 +171,39 @@ def _process_change(
                 log_context,
             )
             blob_path = _timed(
-                lambda: storage.upload_raw_document(file_id, metadata["file_name"], content),
+                lambda: storage.upload_raw_document(
+                    file_id,
+                    metadata["file_name"],
+                    content,
+                    _build_blob_metadata(item, metadata, event_type, run_id),
+                ),
                 "blob_upload_latency_ms",
                 log_context,
             )
             metadata["blob_path"] = blob_path
             queue_message["blob_path"] = blob_path
         else:
-            blob_path = previous_metadata.get("blob_path") if previous_metadata else None
-            deleted_blob_paths = _timed(
-                lambda: storage.delete_raw_document(file_id, metadata["file_name"], blob_path),
-                "blob_delete_latency_ms",
-                log_context,
-            )
-            metadata["blob_path"] = blob_path
-            metadata["deleted_blob_paths"] = deleted_blob_paths
-            queue_message["blob_path"] = blob_path
+                blob_path = None
+                deleted_blob_paths = []
+                if previous_metadata:
+                    blob_path = previous_metadata.get("blob_path")
+                    deleted_blob_paths = _timed(
+                        lambda: storage.delete_raw_document(file_id, metadata["file_name"], blob_path),
+                        "blob_delete_latency_ms",
+                        log_context,
+                    )
+                else:
+                    logging.warning(
+                        f"could not find metadata for deleted file_id {file_id}, skipping blob deletion",
+                        extra={"custom_dimensions": log_context},
+                    )
+
+                metadata["blob_path"] = blob_path
+                metadata["deleted_blob_paths"] = deleted_blob_paths
+                queue_message["blob_path"] = blob_path
+
+        metadata["blob_path"] = blob_path
+        queue_message["blob_path"] = blob_path
 
         storage.upload_json(storage.settings.metadata_container, f"{file_id}.json", metadata)
         _timed(lambda: storage.send_queue_message(queue_message), "queue_publish_latency_ms", log_context)
@@ -160,12 +232,18 @@ def _build_payloads(item: dict[str, Any], event_type: str, run_id: str) -> tuple
     etag = item.get("etag")
     sharepoint_url = item.get("web_url")
     last_modified = item.get("last_modified")
+    server_relative_url = item.get("server_relative_url")
+    file_size_bytes = item.get("file_size_bytes")
+    document_metadata = _document_metadata(item)
 
     metadata = {
         "file_id": file_id,
         "file_name": file_name,
         "etag": etag,
         "sharepoint_url": sharepoint_url,
+        "server_relative_url": server_relative_url,
+        "file_size_bytes": file_size_bytes,
+        "document_metadata": document_metadata,
         "last_modified": last_modified,
         "status": event_type,
     }
@@ -176,11 +254,54 @@ def _build_payloads(item: dict[str, Any], event_type: str, run_id: str) -> tuple
         "blob_path": None,
         "etag": etag,
         "sharepoint_url": sharepoint_url,
+        "server_relative_url": server_relative_url,
+        "file_size_bytes": file_size_bytes,
+        "document_metadata": document_metadata,
         "last_modified": last_modified,
         "run_id": run_id,
         "timestamp": now,
     }
     return metadata, message
+
+
+def _build_blob_metadata(
+    item: dict[str, Any],
+    metadata: dict[str, Any],
+    event_type: str,
+    run_id: str,
+) -> dict[str, str]:
+    blob_metadata = {
+        "source": "sharepoint",
+        "sync_status": event_type,
+        "sync_run_id": run_id,
+        "file_id": metadata.get("file_id"),
+        "file_name": metadata.get("file_name"),
+        "etag": metadata.get("etag"),
+        "sharepoint_url": metadata.get("sharepoint_url"),
+        "server_relative_url": metadata.get("server_relative_url"),
+        "last_modified": metadata.get("last_modified"),
+        "file_size_bytes": metadata.get("file_size_bytes"),
+        "sharepoint_item_id": item.get("id"),
+    }
+    blob_metadata.update(
+        {
+            key: value
+            for key, value in metadata.get("document_metadata", {}).items()
+            if value is not None
+        }
+    )
+    return {key: _blob_metadata_value(value) for key, value in blob_metadata.items() if value is not None}
+
+
+def _document_metadata(item: dict[str, Any]) -> dict[str, Any]:
+    metadata = item.get("document_metadata")
+    if not isinstance(metadata, dict):
+        return {}
+    return {key: value for key, value in metadata.items() if value is not None}
+
+
+def _blob_metadata_value(value: Any) -> str:
+    return quote(str(value), safe="/:.-_~")[:1024]
 
 
 def _state_payload(snapshot: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -191,6 +312,8 @@ def _state_payload(snapshot: dict[str, dict[str, Any]]) -> dict[str, dict[str, A
             "last_modified": item.get("last_modified"),
             "sharepoint_url": item.get("web_url"),
             "server_relative_url": item.get("server_relative_url"),
+            "file_size_bytes": item.get("file_size_bytes"),
+            "document_metadata": _document_metadata(item),
         }
         for file_id, item in snapshot.items()
     }

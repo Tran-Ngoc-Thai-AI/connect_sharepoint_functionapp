@@ -1,3 +1,5 @@
+import ast
+import json
 import os
 from dataclasses import dataclass
 
@@ -17,6 +19,7 @@ class Settings:
     snapshot_state_blob: str
     sharepoint_timeout_seconds: int
     sharepoint_page_size: int
+    sharepoint_document_metadata_fields: dict[str, str]
 
 
 def _optional(name: str) -> str | None:
@@ -29,6 +32,28 @@ def _required(name: str) -> str:
     if not value:
         raise ValueError(f"Missing required app setting: {name}")
     return value
+
+
+def _json_mapping(name: str) -> dict[str, str]:
+    value = _optional(name)
+    if not value:
+        return {}
+
+    try:
+        payload = json.loads(value)
+    except json.JSONDecodeError as exc:
+        try:
+            payload = ast.literal_eval(value)
+        except (SyntaxError, ValueError) as literal_exc:
+            raise ValueError(
+                f"{name} must be a JSON object, for example "
+                '{"document_number":"SharePointInternalName"}'
+            ) from literal_exc
+
+    if not isinstance(payload, dict):
+        raise ValueError(f"{name} must be a JSON object")
+
+    return {str(key): str(field).strip() for key, field in payload.items() if field}
 
 
 def load_settings() -> Settings:
@@ -46,4 +71,5 @@ def load_settings() -> Settings:
         snapshot_state_blob=os.getenv("SNAPSHOT_STATE_BLOB", "document_library_state.json"),
         sharepoint_timeout_seconds=int(os.getenv("SHAREPOINT_TIMEOUT_SECONDS", "30")),
         sharepoint_page_size=int(os.getenv("SHAREPOINT_PAGE_SIZE", "5000")),
+        sharepoint_document_metadata_fields=_json_mapping("SHAREPOINT_DOCUMENT_METADATA_FIELDS"),
     )
