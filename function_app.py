@@ -12,7 +12,7 @@ from sharepoint_delta.sharepoint_client import SharePointRestClient
 
 
 app = func.FunctionApp()
-CODE_VERSION = os.getenv("CODE_VERSION", "v1.6.0-sync_metadata")
+CODE_VERSION = os.getenv("CODE_VERSION", "v1.6.0-sync_metadata_db")
 
 
 @app.route(route="{*path}", auth_level=func.AuthLevel.ANONYMOUS, methods=["GET"])
