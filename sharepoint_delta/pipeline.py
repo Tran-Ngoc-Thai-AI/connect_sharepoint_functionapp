@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from importlib.metadata import metadata
 import logging
 import time
 from datetime import UTC, datetime
@@ -8,12 +9,16 @@ from urllib.parse import quote
 from uuid import uuid4
 
 from azure.identity import DefaultAzureCredential
+import psycopg
+from tomlkit import document
 
 from .config import load_settings
 from .metrics import SyncMetrics
 from .sharepoint_client import SharePointRestClient
 from .storage import StorageGateway
 
+from .metadata_sync import build_document
+from sharepoint_delta import postgres_sync
 
 PHASE = "phase1"
 FUNCTION_NAME = "sharepoint_change_detection_timer"
@@ -27,6 +32,17 @@ def run_change_detection() -> None:
 
     try:
         settings = load_settings()
+
+        conn = psycopg.connect(  ## type: add new connection
+            host=settings.host,
+            port=settings.port,
+            dbname=settings.dbname,
+            user=settings.user,
+            password=settings.password,
+        )
+
+        logging.info("PostgreSQL connected successfully") ## log connection success
+
         credential = DefaultAzureCredential()
         storage = StorageGateway(settings, credential, run_context, lambda: metrics.inc("retry_count"))
         sharepoint = SharePointRestClient(credential, settings, run_context, lambda: metrics.inc("retry_count"))
@@ -56,7 +72,7 @@ def run_change_detection() -> None:
         logging.info(f"found {len(all_changes)} total changes to process", extra={"custom_dimensions": run_context})
         for event_type, item in all_changes:
             metrics.inc(f"{event_type}_count")
-            _process_change(item, event_type, run_id, sharepoint, storage, metrics, run_context)
+            _process_change(item, event_type, run_id, sharepoint, storage, conn, metrics, run_context) ## process change add conn as parameter
 
         storage.save_snapshot_state(_state_payload(current_snapshot))
 
@@ -65,10 +81,13 @@ def run_change_detection() -> None:
         # Re-raise the exception to make the function fail explicitly
         raise
     finally:
+        if conn: ## close connection if it exists and is not None
+            conn.close()
         logging.info(
             "finished sharepoint change detection",
             extra={"custom_dimensions": {**run_context, **metrics.snapshot()}},
         )
+  
 
 
 def _build_current_snapshot(sharepoint: SharePointRestClient, metrics: SyncMetrics) -> dict[str, dict[str, Any]]:
@@ -148,6 +167,7 @@ def _process_change(
     run_id: str,
     sharepoint: SharePointRestClient,
     storage: StorageGateway,
+    conn: psycopg.Connection,  ## postgresql connection
     metrics: SyncMetrics,
     run_context: dict[str, str],
 ) -> None:
@@ -181,6 +201,22 @@ def _process_change(
                 log_context,
             )
             metadata["blob_path"] = blob_path
+
+            document = build_document(metadata) ## build document from metadata
+
+            logging.info( ## log document summary
+                "PostgreSQL document summary: "
+                "blob=%s, metadata_fields=%d",
+                document["blob_name"],
+                len(document["metadata"])
+            )
+
+            logging.info("===== BEFORE POSTGRES SYNC =====") ## log before postgres sync
+            logging.info("blob=%s", document["blob_name"])
+            logging.info("metadata=%s", document["metadata"])
+
+            postgres_sync.sync(conn, document) ## sync document to postgres
+
             queue_message["blob_path"] = blob_path
         else:
                 blob_path = None
@@ -200,6 +236,10 @@ def _process_change(
 
                 metadata["blob_path"] = blob_path
                 metadata["deleted_blob_paths"] = deleted_blob_paths
+
+                if blob_path: ## if blob_path is not None
+                    postgres_sync.delete(conn, blob_path) ## delete document from postgres
+
                 queue_message["blob_path"] = blob_path
 
         metadata["blob_path"] = blob_path

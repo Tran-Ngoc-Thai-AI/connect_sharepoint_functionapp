@@ -1,16 +1,7 @@
 .vscode/
-local.settings.json
 *.pyc
 __pycache__/
 .python_packages/
-.venv/
-.env
-note.txt
-phase1.md
-phase2.md
-phase3.md
-phase4.md
-readme_test.md
 TaiLieuSharepointPermissionPYC.docx
 test.ipynb
-
+test_2.ipynb

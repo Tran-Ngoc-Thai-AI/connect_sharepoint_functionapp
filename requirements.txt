@@ -3,3 +3,5 @@ azure-identity
 azure-storage-blob
 azure-storage-queue
 requests
+psycopg[binary] ### Use psycopg[binary] instead of psycopg2 to avoid compatibility issues with psycopg2-binary
+tomlkit ### Use tomlkit to parse toml files

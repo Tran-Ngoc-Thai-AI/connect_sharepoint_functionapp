@@ -20,6 +20,11 @@ class Settings:
     sharepoint_timeout_seconds: int
     sharepoint_page_size: int
     sharepoint_document_metadata_fields: dict[str, str]
+    host: str ## Database host
+    port: int ## Database port
+    dbname: str ## Database name
+    user: str ## Database user
+    password: str ## Database password
 
 
 def _optional(name: str) -> str | None:
@@ -72,4 +77,9 @@ def load_settings() -> Settings:
         sharepoint_timeout_seconds=int(os.getenv("SHAREPOINT_TIMEOUT_SECONDS", "30")),
         sharepoint_page_size=int(os.getenv("SHAREPOINT_PAGE_SIZE", "5000")),
         sharepoint_document_metadata_fields=_json_mapping("SHAREPOINT_DOCUMENT_METADATA_FIELDS"),
+        host=os.getenv("host", "dbuatnexssi.postgres.database.azure.com"), ## Database host
+        port=int(os.getenv("port", "5432")), ## Database port
+        dbname=os.getenv("dbname", "postgres"), ## Database name
+        user=os.getenv("user", "thaitn36514"), ## Database user 
+        password=os.getenv("password", "Sacombank@123"), ## Database password
     )
