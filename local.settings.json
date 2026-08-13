@@ -26,6 +26,9 @@
 
     "SHAREPOINT_DOCUMENT_METADATA_FIELDS": "{}",
 
+    "TABLE_NAME": "vblq_metadata",
+    "SCHEMA_NAME": "public",
+
     "host": "dbuatnexssi.postgres.database.azure.com",
     "port": "5432",
     "dbname": "postgres",

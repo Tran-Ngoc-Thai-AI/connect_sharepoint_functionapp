@@ -3,11 +3,13 @@
 # ==========================
 
 import logging
+import os
 import re
 
 logging.basicConfig(level=logging.INFO)
-TABLE_NAME = "vblq_metadata"
-SCHEMA_NAME = "public"
+
+TABLE_NAME = os.getenv("TABLE_NAME", os.getenv("POSTGRES_TABLE_NAME", "vblq_metadata"))
+SCHEMA_NAME = os.getenv("SCHEMA_NAME", os.getenv("POSTGRES_SCHEMA_NAME", "public"))
 
 def sync(conn, document):
     logging.info( ## log sync start

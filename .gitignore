@@ -1,0 +1,7 @@
+.vscode/
+*.pyc
+__pycache__/
+.python_packages/
+TaiLieuSharepointPermissionPYC.docx
+test.ipynb
+test_2.ipynb
