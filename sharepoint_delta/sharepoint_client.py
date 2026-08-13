@@ -25,12 +25,14 @@ class SharePointRestClient:
         self.run_context = run_context
         self.on_retry = on_retry
         self._resolved_document_metadata_fields: dict[str, str] | None = None
+        self._resolved_document_metadata_field_types: dict[str, str] | None = None
         parsed = urlparse(settings.sharepoint_site_url)
         self.resource = f"{parsed.scheme}://{parsed.netloc}"
         self.scope = f"{self.resource}/.default"
 
     def iter_files(self) -> Iterator[dict]:
         document_metadata_fields = self._document_metadata_fields()
+        document_metadata_field_types = self._document_metadata_field_types()
         select_fields = [
             "Id",
             "UniqueId",
@@ -63,6 +65,7 @@ class SharePointRestClient:
                     item,
                     self.settings.sharepoint_site_url,
                     document_metadata_fields,
+                    document_metadata_field_types,
                 )
                 if normalized and _is_supported_file(normalized["file_name"], normalized["server_relative_url"]):
                     yield normalized
@@ -171,6 +174,13 @@ class SharePointRestClient:
             )
         return self._resolved_document_metadata_fields
 
+    def _document_metadata_field_types(self) -> dict[str, str]:
+        if self._resolved_document_metadata_field_types is None:
+            self._resolved_document_metadata_field_types = self._resolve_document_metadata_field_types(
+                self.settings.sharepoint_document_metadata_fields
+            )
+        return self._resolved_document_metadata_field_types
+
     def _resolve_document_metadata_fields(self, configured_fields: dict[str, str]) -> dict[str, str]:
         if not configured_fields:
             return {}
@@ -178,7 +188,7 @@ class SharePointRestClient:
         library_title = _escape_odata_string(self.settings.sharepoint_library_title)
         url = (
             f"{self.settings.sharepoint_site_url}/_api/web/lists/getbytitle('{library_title}')/fields"
-            "?$select=Title,InternalName,StaticName,EntityPropertyName"
+            "?$select=Title,InternalName,StaticName,EntityPropertyName,TypeAsString"
         )
         fields = _extract_items(self._get_json(url))
         field_lookup = _field_lookup(fields)
@@ -204,6 +214,31 @@ class SharePointRestClient:
             resolved_fields[metadata_name] = f"{rest_field_name}{separator}{nested_path}"
 
         return resolved_fields
+
+    def _resolve_document_metadata_field_types(self, configured_fields: dict[str, str]) -> dict[str, str]:
+        if not configured_fields:
+            return {}
+
+        library_title = _escape_odata_string(self.settings.sharepoint_library_title)
+        url = (
+            f"{self.settings.sharepoint_site_url}/_api/web/lists/getbytitle('{library_title}')/fields"
+            "?$select=Title,InternalName,StaticName,EntityPropertyName,TypeAsString"
+        )
+        fields = _extract_items(self._get_json(url))
+        field_lookup = _field_lookup(fields)
+        resolved_types = {}
+
+        for metadata_name, configured_field in configured_fields.items():
+            field_root, _, _ = configured_field.partition("/")
+            field = field_lookup.get(_field_lookup_key(field_root))
+            if not field:
+                continue
+
+            resolved_types[metadata_name] = _sharepoint_field_type_to_postgres(
+                field.get("TypeAsString")
+            )
+
+        return resolved_types
 
     def _log_sharepoint_error(self, response: requests.Response, url: str) -> None:
         logging.error(
@@ -233,7 +268,12 @@ def _next_link(payload: dict) -> str | None:
     return payload.get("d", {}).get("__next")
 
 
-def _normalize_file_item(item: dict, site_url: str, document_metadata_fields: dict[str, str]) -> dict | None:
+def _normalize_file_item(
+    item: dict,
+    site_url: str,
+    document_metadata_fields: dict[str, str],
+    document_metadata_field_types: dict[str, str],
+) -> dict | None:
     file_obj = item.get("File") or {}
     file_name = item.get("FileLeafRef") or file_obj.get("Name")
     server_relative_url = item.get("FileRef") or file_obj.get("ServerRelativeUrl")
@@ -253,6 +293,7 @@ def _normalize_file_item(item: dict, site_url: str, document_metadata_fields: di
         "file_size_bytes": file_obj.get("Length"),
         "last_modified": last_modified,
         "document_metadata": _extract_document_metadata(item, document_metadata_fields),
+        "document_metadata_types": _extract_document_metadata_types(document_metadata_fields, document_metadata_field_types),
         "server_relative_url": server_relative_url,
         "web_url": f"{site_url.rstrip('/')}/{server_relative_url.lstrip('/')}",
     }
@@ -282,6 +323,23 @@ def _extract_document_metadata(item: dict, document_metadata_fields: dict[str, s
         for metadata_name, field_name in document_metadata_fields.items()
         if (value := _stringify_sharepoint_value(_get_nested_value(item, field_name))) is not None
     }
+
+
+def _extract_document_metadata_types(
+    document_metadata_fields: dict[str, str],
+    document_metadata_field_types: dict[str, str],
+) -> dict[str, str]:
+    return {
+        metadata_name: document_metadata_field_types.get(metadata_name, "TEXT")
+        for metadata_name in document_metadata_fields
+    }
+
+
+def _sharepoint_field_type_to_postgres(type_as_string: str | None) -> str:
+    normalized = (type_as_string or "Text").strip().casefold()
+    if normalized in {"datetime", "date time", "datetimehidden", "date and time"}:
+        return "TIMESTAMPTZ"
+    return "TEXT"
 
 
 def _get_nested_value(item: dict, field_name: str):

@@ -275,6 +275,7 @@ def _build_payloads(item: dict[str, Any], event_type: str, run_id: str) -> tuple
     server_relative_url = item.get("server_relative_url")
     file_size_bytes = item.get("file_size_bytes")
     document_metadata = _document_metadata(item)
+    document_metadata_types = _document_metadata_types(item)
 
     metadata = {
         "file_id": file_id,
@@ -284,6 +285,7 @@ def _build_payloads(item: dict[str, Any], event_type: str, run_id: str) -> tuple
         "server_relative_url": server_relative_url,
         "file_size_bytes": file_size_bytes,
         "document_metadata": document_metadata,
+        "document_metadata_types": document_metadata_types,
         "last_modified": last_modified,
         "status": event_type,
     }
@@ -297,6 +299,7 @@ def _build_payloads(item: dict[str, Any], event_type: str, run_id: str) -> tuple
         "server_relative_url": server_relative_url,
         "file_size_bytes": file_size_bytes,
         "document_metadata": document_metadata,
+        "document_metadata_types": document_metadata_types,
         "last_modified": last_modified,
         "run_id": run_id,
         "timestamp": now,
@@ -338,6 +341,13 @@ def _document_metadata(item: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(metadata, dict):
         return {}
     return {key: value for key, value in metadata.items() if value is not None}
+
+
+def _document_metadata_types(item: dict[str, Any]) -> dict[str, str]:
+    metadata_types = item.get("document_metadata_types")
+    if not isinstance(metadata_types, dict):
+        return {}
+    return {key: str(value) for key, value in metadata_types.items() if value is not None}
 
 
 def _blob_metadata_value(value: Any) -> str:

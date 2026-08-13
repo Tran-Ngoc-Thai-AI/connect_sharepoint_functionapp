@@ -3,10 +3,11 @@
 # ==========================
 
 import logging
+import os
 import re
 
 logging.basicConfig(level=logging.INFO)
-TABLE_NAME = "vblq_metadata"
+TABLE_NAME = os.getenv("POSTGRES_TABLE_NAME", "vblq_metadata")
 SCHEMA_NAME = "public"
 
 def sync(conn, document):
@@ -35,6 +36,7 @@ def sync(conn, document):
         # mapping:
         # SharePoint field -> DB column
         column_mapping = {}
+        column_types = document.get("metadata_types", {}) if isinstance(document.get("metadata_types", {}), dict) else {}
 
         for field in metadata_fields:
             column_mapping[field] = normalize_column_name(field)
@@ -86,8 +88,10 @@ def sync(conn, document):
 
             for field, column_name in column_mapping.items():
 
+                dtype = map_postgres_type(column_types.get(field))
+
                 columns.append(
-                    f"{column_name} TEXT"
+                    f"{column_name} {dtype}"
                 )
 
 
@@ -157,12 +161,14 @@ def sync(conn, document):
 
                 for field, column_name in column_mapping.items():
 
+                    dtype = map_postgres_type(column_types.get(field))
+
 
                     if column_name not in existing_columns:
 
                         alter_sql = f"""
                         ALTER TABLE {SCHEMA_NAME}.{TABLE_NAME}
-                        ADD COLUMN {column_name} TEXT;
+                        ADD COLUMN {column_name} {dtype};
                         """
 
                         cur.execute(alter_sql)
@@ -258,8 +264,11 @@ def sync(conn, document):
             ]
 
             # Thêm toàn bộ metadata theo đúng mapping
+            field_types = document.get("metadata_types", {}) or {}
+
             for source_field in column_mapping:
-                values.append(metadata.get(source_field))
+                value = metadata.get(source_field)
+                values.append(normalize_metadata_value(source_field, value, field_types.get(source_field)))
 
             logging.info("========== PostgreSQL Debug ==========")
             logging.info("Blob: %s", doc["blob_name"])
@@ -350,3 +359,43 @@ def delete(conn, blob_name: str):
         )
 
     conn.commit()
+
+
+def map_postgres_type(sharepoint_type: str | None) -> str:
+    normalized = (sharepoint_type or "Text").strip().casefold()
+
+    if normalized in {"datetime", "date time", "datetimehidden"}:
+        return "TIMESTAMPTZ"
+
+    return "TEXT"
+
+
+from datetime import datetime
+
+def normalize_metadata_value(field_name: str, value, sharepoint_type: str | None):
+    if value is None:
+        return None
+
+    normalized_type = (sharepoint_type or "Text").strip().casefold()
+    if normalized_type in {"datetime", "date time", "datetimehidden", "date and time"}:
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                return None
+            
+            # Danh sách các định dạng có thể nhận từ SharePoint/Blob
+            for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
+                try:
+                    dt_obj = datetime.strptime(value, fmt)
+                    # Chuyển đổi đối tượng datetime thành chuỗi định dạng DD-MM-YYYY
+                    return dt_obj.strftime("%d-%m-%Y")
+                except ValueError:
+                    pass
+                    
+        # Trường hợp giá trị truyền vào đã là đối tượng datetime sẵn từ thư viện khác
+        if isinstance(value, datetime):
+            return value.strftime("%d-%m-%Y")
+            
+        return value
+
+    return value
