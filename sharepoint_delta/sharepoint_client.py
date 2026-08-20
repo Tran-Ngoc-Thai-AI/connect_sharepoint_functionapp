@@ -276,9 +276,11 @@ def _field_lookup_key(value: str) -> str:
     return value.strip().casefold()
 
 
+from urllib.parse import unquote
+
 def _extract_document_metadata(item: dict, document_metadata_fields: dict[str, str]) -> dict[str, str]:
     return {
-        metadata_name: value
+        metadata_name: unquote(value) if isinstance(value, str) else value
         for metadata_name, field_name in document_metadata_fields.items()
         if (value := _stringify_sharepoint_value(_get_nested_value(item, field_name))) is not None
     }

@@ -17,7 +17,7 @@ from .metrics import SyncMetrics
 from .sharepoint_client import SharePointRestClient
 from .storage import StorageGateway
 
-from .metadata_sync import build_document
+from .metadata_sync import build_document, decode_sharepoint_metadata
 from sharepoint_delta import postgres_sync
 
 PHASE = "phase1"
@@ -274,7 +274,10 @@ def _build_payloads(item: dict[str, Any], event_type: str, run_id: str) -> tuple
     last_modified = item.get("last_modified")
     server_relative_url = item.get("server_relative_url")
     file_size_bytes = item.get("file_size_bytes")
+    # Trong hàm _build_payloads:
     document_metadata = _document_metadata(item)
+    # Decode URL-encoded metadata cho PostgreSQL và AI Search
+    decoded_metadata = decode_sharepoint_metadata(document_metadata)
 
     metadata = {
         "file_id": file_id,
@@ -283,7 +286,8 @@ def _build_payloads(item: dict[str, Any], event_type: str, run_id: str) -> tuple
         "sharepoint_url": sharepoint_url,
         "server_relative_url": server_relative_url,
         "file_size_bytes": file_size_bytes,
-        "document_metadata": document_metadata,
+        "document_metadata": document_metadata,  # Giữ nguyên cho blob / storage metadata
+        "document_metadata_decoded": decoded_metadata,  # Dùng cho AI Search / consumers cần text hiển thị
         "last_modified": last_modified,
         "status": event_type,
     }
@@ -296,7 +300,7 @@ def _build_payloads(item: dict[str, Any], event_type: str, run_id: str) -> tuple
         "sharepoint_url": sharepoint_url,
         "server_relative_url": server_relative_url,
         "file_size_bytes": file_size_bytes,
-        "document_metadata": document_metadata,
+        "document_metadata": decoded_metadata,  # Sử dụng giá trị đã decode cho queue
         "last_modified": last_modified,
         "run_id": run_id,
         "timestamp": now,

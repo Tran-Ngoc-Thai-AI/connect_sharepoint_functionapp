@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from email.mime import message
 import json
 from datetime import UTC, datetime
 from typing import Any
@@ -130,6 +131,9 @@ class StorageGateway:
         )
 
     def send_queue_message(self, message: dict[str, Any]) -> None:
+        # Thêm dòng log này để kiểm tra
+        import logging
+        logging.info(f"[DEBUG] Queue message Tinh_trang: {message.get('document_metadata', {}).get('Tinh_trang')}")
         body = json.dumps(message, ensure_ascii=False)
 
         def operation() -> None:
