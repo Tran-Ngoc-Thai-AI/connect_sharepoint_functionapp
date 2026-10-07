@@ -12,7 +12,7 @@ from sharepoint_delta.sharepoint_client import SharePointRestClient
 
 
 app = func.FunctionApp()
-CODE_VERSION = os.getenv("CODE_VERSION", "v1.7.0-update_env_table_name")
+CODE_VERSION = os.getenv("CODE_VERSION", "v1.7.1-update_rule_delete")
 
 
 @app.route(route="{*path}", auth_level=func.AuthLevel.ANONYMOUS, methods=["GET"])

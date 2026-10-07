@@ -59,6 +59,9 @@ class StorageGateway:
         content: bytes,
         metadata: dict[str, str] | None = None,
     ) -> str:
+        # Add print check error not fild at blob
+        print(f"[DEBUG] Bắt đầu upload file: {file_name} (id: {file_id})")
+        #
         from azure.storage.blob import ContentSettings
 
         blob_name = f"{file_name}/{file_name}"
@@ -79,6 +82,9 @@ class StorageGateway:
             log_context={**self.run_context, "file_id": file_id},
             retry_metric=self.on_retry,
         )
+        # Add print check error not fild at blob
+        print(f"[DEBUG] Upload thành công file: {file_name} -> {blob_name}")
+        #
         return f"{self.settings.raw_container}/{blob_name}"
 
     def delete_raw_document(self, file_id: str, file_name: str, blob_path: str | None = None) -> list[str]:

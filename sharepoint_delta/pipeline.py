@@ -20,6 +20,7 @@ from .storage import StorageGateway
 from .metadata_sync import build_document
 from sharepoint_delta import postgres_sync
 
+
 PHASE = "phase1"
 FUNCTION_NAME = "sharepoint_change_detection_timer"
 
@@ -55,6 +56,18 @@ def run_change_detection() -> None:
         )
         saved_snapshot = storage.load_snapshot_state()
 
+        # Add print check error not fild at blob
+        # Print số lượng file trong mỗi snapshot
+        print(f"[DEBUG] Snapshot cũ (saved) có {saved_snapshot} file")
+        print(f"[DEBUG] Snapshot mới (current) có {current_snapshot} file")
+
+        # In ra danh sách file_name hoặc file_id trong cả 2 snapshot để so sánh
+        saved_files = list(saved_snapshot)
+        current_files = list(current_snapshot)
+        print(f"[DEBUG] File trong snapshot cũ: {saved_files}")
+        print(f"[DEBUG] File trong snapshot mới: {current_files}")
+        #
+
         all_changes: list[tuple[str, dict[str, Any]]] = []
         if not saved_snapshot:
             logging.info("resync mode: state file not found", extra={"custom_dimensions": run_context})
@@ -68,6 +81,11 @@ def run_change_detection() -> None:
         else:
             logging.info("delta mode: detecting changes from saved state", extra={"custom_dimensions": run_context})
             all_changes = _detect_changes(saved_snapshot, current_snapshot)
+
+        # Add print check error not fild at blob
+        # In ra toàn bộ changes để xem code phát hiện những thay đổi gì
+        print(f"[DEBUG] Kết quả detect changes: {all_changes}")
+        #    
 
         logging.info(f"found {len(all_changes)} total changes to process", extra={"custom_dimensions": run_context})
         for event_type, item in all_changes:
@@ -183,6 +201,8 @@ def _process_change(
     try:
         previous_metadata = storage.load_metadata(file_id) if event_type == "deleted" else None
         metadata, queue_message = _build_payloads(item, event_type, run_id)
+        print(f" Event type of {file_id}: {event_type}")
+        print(F" Event type of {run_id}: {event_type}")
 
         if event_type != "deleted":
             content = _timed(
@@ -217,30 +237,48 @@ def _process_change(
 
             postgres_sync.sync(conn, document) ## sync document to postgres
 
-            queue_message["blob_path"] = blob_path
+            # queue_message["blob_path"] = blob_path
         else:
                 blob_path = None
                 deleted_blob_paths = []
                 if previous_metadata:
                     blob_path = previous_metadata.get("blob_path")
-                    deleted_blob_paths = _timed(
-                        lambda: storage.delete_raw_document(file_id, metadata["file_name"], blob_path),
-                        "blob_delete_latency_ms",
-                        log_context,
-                    )
+                    # add download to check status of blob before delete
+                    try:
+                        file_data = sharepoint.download_file(item)
+                    except:
+                        file_data = None
+                    if file_data is None:
+
+                        deleted_blob_paths = _timed(
+                            lambda: storage.delete_raw_document(file_id, metadata["file_name"], blob_path),
+                            "blob_delete_latency_ms",
+                            log_context,
+                        )
+                        metadata["blob_path"] = blob_path
+                        metadata["deleted_blob_paths"] = deleted_blob_paths
+
+                        if blob_path: ## if blob_path is not None
+                            postgres_sync.delete(conn, blob_path) ## delete document from postgres
+                    #
+                    # deleted_blob_paths = _timed(
+                    #     lambda: storage.delete_raw_document(file_id, metadata["file_name"], blob_path),
+                    #     "blob_delete_latency_ms",
+                    #     log_context,
+                    # )
                 else:
                     logging.warning(
                         f"could not find metadata for deleted file_id {file_id}, skipping blob deletion",
                         extra={"custom_dimensions": log_context},
                     )
 
-                metadata["blob_path"] = blob_path
-                metadata["deleted_blob_paths"] = deleted_blob_paths
+                # metadata["blob_path"] = blob_path
+                # metadata["deleted_blob_paths"] = deleted_blob_paths
 
-                if blob_path: ## if blob_path is not None
-                    postgres_sync.delete(conn, blob_path) ## delete document from postgres
+                # if blob_path: ## if blob_path is not None
+                #     postgres_sync.delete(conn, blob_path) ## delete document from postgres
 
-                queue_message["blob_path"] = blob_path
+                # queue_message["blob_path"] = blob_path
 
         metadata["blob_path"] = blob_path
         queue_message["blob_path"] = blob_path
